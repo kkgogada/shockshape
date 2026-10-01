@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ShockShape · airfoil design lab</title>
+  <meta name="description" content="Draw an airfoil, sweep it from Mach 0.5 to 3.5, and watch a gradient-based optimizer reshape it to minimise wave drag. Shock-expansion theory, a transonic small-disturbance solver and a neural surrogate, all in the browser." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b0c0e'/%3E%3Cpath d='M4 17 Q16 9 28 17 Q16 21 4 17Z' fill='%23e5383b'/%3E%3Cpath d='M4 17 L14 4 M4 17 L14 30' stroke='%23c9ced6' stroke-width='1.6'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>ShockShape</h1>
+        <p class="tag">Interactive transonic &amp; supersonic airfoil design</p>
+      </div>
+    </div>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#validation">Validation</a>
+      <a href="https://github.com/kkgogada/shockshape" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <main class="lab">
+    <section class="flow card" aria-label="Flow view">
+      <div class="card-head">
+        <h2>Flow view</h2>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="canvas-wrap" id="flowWrap">
+        <canvas id="flow"></canvas>
+        <div class="busy" id="busy" hidden><span class="spinner"></span><span id="busyText">Solving…</span></div>
+      </div>
+      <p class="hint">Drag the red handles to reshape the upper and lower surfaces.</p>
+    </section>
+
+    <aside class="controls card" aria-label="Controls">
+      <div class="field">
+        <label for="mach"><span>Free-stream Mach</span> <output id="machOut"></output></label>
+        <input type="range" id="mach" min="0.5" max="3.5" step="0.01" value="2.0" />
+        <div class="regime" id="regime"></div>
+      </div>
+      <div class="field">
+        <label for="alpha"><span>Angle of attack</span> <output id="alphaOut"></output></label>
+        <input type="range" id="alpha" min="-6" max="10" step="0.1" value="2" />
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="engine">Physics model</label>
+          <select id="engine">
+            <option value="auto">Auto</option>
+            <option value="shock-expansion">Shock-expansion</option>
+            <option value="tsd">Transonic (TSD)</option>
+            <option value="surrogate">Neural surrogate</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="preset">Start from</label>
+          <select id="preset"></select>
+        </div>
+      </div>
+      <p class="engine-note" id="engineNote"></p>
+
+      <div class="readouts">
+        <div class="ro"><span>C<sub>L</sub></span><b id="roCl">–</b></div>
+        <div class="ro"><span>C<sub>D</sub> wave</span><b id="roCd">–</b></div>
+        <div class="ro"><span>L/D inviscid</span><b id="roLD">–</b></div>
+        <div class="ro"><span>C<sub>M,c/4</sub></span><b id="roCm">–</b></div>
+        <div class="ro"><span>t/c</span><b id="roTc">–</b></div>
+        <div class="ro"><span>Area</span><b id="roArea">–</b></div>
+      </div>
+      <div class="status" id="status"></div>
+      <ul class="warnings" id="warnings"></ul>
+    </aside>
+
+    <section class="cp card" aria-label="Pressure distribution">
+      <div class="card-head">
+        <h2>Surface pressure</h2>
+        <div class="legend" id="cpLegend"></div>
+      </div>
+      <div class="canvas-wrap short"><canvas id="cp"></canvas></div>
+    </section>
+
+    <section class="opt card" aria-label="Optimizer">
+      <div class="card-head">
+        <h2>Optimize: minimise drag</h2>
+        <span class="pill" id="gradPill"></span>
+      </div>
+      <div class="opt-grid">
+        <div class="field">
+          <label for="clTarget"><span>Target C<sub>L</sub></span> <output id="clOut"></output></label>
+          <input type="range" id="clTarget" min="0" max="0.5" step="0.01" value="0.15" />
+        </div>
+        <div class="field">
+          <label for="constraint">Keep at least</label>
+          <div class="row2 tight">
+            <select id="constraint">
+              <option value="thickness">thickness t/c</option>
+              <option value="area">cross-section area</option>
+            </select>
+            <input type="number" id="limit" step="0.005" min="0.01" max="0.12" value="0.05" />
+          </div>
+        </div>
+        <div class="buttons">
+          <button id="run" class="primary">Run optimizer</button>
+          <button id="stop" disabled>Stop</button>
+          <button id="restore" disabled>Restore start</button>
+        </div>
+      </div>
+      <div class="canvas-wrap tiny"><canvas id="hist"></canvas></div>
+      <p class="opt-text" id="optText">Without a thickness or area constraint the drag minimum is a zero-thickness flat plate. With one, the optimizer has to trade shape against shock strength, which is real airfoil design.</p>
+    </section>
+  </main>
+
+  <section class="explain" id="how">
+    <h2>How it works</h2>
+    <div class="cols">
+      <article>
+        <h3>One interface, three physics models</h3>
+        <p>Every model answers the same question: <em>shape, Mach, α → surface C<sub>p</sub>, C<sub>L</sub>, C<sub>D</sub></em>. The editor and the optimizer never know which one is running.</p>
+        <p><b>Shock-expansion theory</b> (M ≳ 1.3): an oblique shock or Prandtl–Meyer expansion at the leading edge, then isentropic simple waves along each surface. For thin, sharp sections with an attached shock this is the exact inviscid surface solution apart from weak reflected waves. Linearized (Ackeret) theory is drawn alongside so you can see where it breaks down.</p>
+        <p><b>Transonic small-disturbance solver</b> (M ≈ 0.5–1.3): the nonlinear TSD equation on a stretched 2-D grid, discretized with Murman’s conservative type-dependent scheme and solved by line relaxation with grid sequencing and Anderson acceleration. It captures embedded shocks, the sonic line, and shock wave drag (Oswatitsch entropy formula).</p>
+        <p><b>Neural surrogate</b>: a small tanh MLP trained offline on a sweep of flow solutions. It evaluates in microseconds and its gradients come from one backward pass.</p>
+      </article>
+      <article>
+        <h3>The design loop</h3>
+        <p>The optimizer minimises C<sub>D</sub> subject to a lift target (α is a design variable) and a thickness or area floor, using an augmented Lagrangian with BFGS steps.</p>
+        <p>The gradient is the expensive part. With finite differences every design iteration costs one flow solve per design variable (11 here). That is why real shape optimization, including the SU2 work this app extends, uses <b>adjoint</b> methods: the full gradient for roughly the cost of one extra solve, however many design variables there are.</p>
+        <p>The neural surrogate plays the adjoint’s role in the browser: its back-propagated gradient costs one pass regardless of dimension. The <span class="mono">eval</span> counter under the convergence plot makes the difference visible.</p>
+        <p>Try it: at Mach 2 with a fixed <b>t/c</b> the optimizer heads toward a double-wedge; with a fixed <b>area</b> it heads toward a biconvex. That is exactly what linearized supersonic theory predicts.</p>
+      </article>
+      <article id="validation">
+        <h3>Validation</h3>
+        <p>Automated tests (<span class="mono">npm test</span>) check the engines against closed-form results:</p>
+        <ul>
+          <li>Prandtl–Meyer, oblique-shock and C<sub>p</sub>* values against NACA 1135 tables</li>
+          <li>Flat plate shock-expansion lift computed by hand; C<sub>D</sub> = C<sub>L</sub> tan α</li>
+          <li>Biconvex wave drag → Ackeret’s 16t²/(3β) as t → 0</li>
+          <li>TSD lift and thickness pressures vs. Prandtl–Glauert theory (≤ 2%)</li>
+          <li>Shock-free subsonic flow: zero wave drag (d’Alembert)</li>
+          <li>TSD at M = 1.5 vs. Ackeret and shock-expansion (≤ 3–5%)</li>
+          <li>Surrogate back-prop gradients vs. finite differences; surrogate-optimized designs re-checked with the true model</li>
+        </ul>
+        <p id="su2Note">Spot checks against SU2 Euler runs from the offline pipeline are listed in the README.</p>
+      </article>
+    </div>
+    <p class="limits"><b>Limits, stated plainly:</b> inviscid models only, so there is no skin friction and no separation. TSD assumes thin airfoils and over-predicts shock strength compared with Euler. Shock-expansion needs an attached leading-edge shock (the app tells you when it detaches). The bundled surrogate is a <em>placeholder trained on shock-expansion data</em> (M 1.4–3) so the whole chain runs end to end; the pipeline in <span class="mono">pipeline/</span> regenerates it from SU2 Euler runs.</p>
+  </section>
+
+  <footer>
+    <p>Built by Khushal Gogada as an extension of research on comparative supersonic airfoil analysis and adjoint-based shape optimization with SU2.</p>
+  </footer>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

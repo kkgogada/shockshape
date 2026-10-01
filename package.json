@@ -1,0 +1,14 @@
+{
+  "name": "shockshape",
+  "version": "1.0.0",
+  "description": "Interactive transonic & supersonic airfoil design: shock-expansion theory, a TSD solver and a neural surrogate driving a drag optimizer, in the browser.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node --test tests/*.test.mjs",
+    "test:py": "python3 -m unittest discover -s tests -p \"test_*.py\""
+  },
+  "license": "MIT",
+  "author": "Khushal Gogada"
+}
